@@ -21,6 +21,19 @@ def _positive_int(value: str) -> int:
     return number
 
 
+MAX_LOG_LINES = 30
+
+
+def _log_lines(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"'{value}' is not a whole number") from e
+    if not 0 <= number <= MAX_LOG_LINES:
+        raise argparse.ArgumentTypeError(f"must be between 0 and {MAX_LOG_LINES}")
+    return number
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bookpdf",
@@ -39,6 +52,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="keep the build folder after a successful build")
     parser.add_argument("--timeout", type=_positive_int, default=180,
                         help="minutes before a build is stopped (default: 180)")
+    parser.add_argument("--log-lines", type=_log_lines, default=8,
+                        help="engine output lines shown under the progress bar, 0 to hide (default: 8)")
     return parser
 
 

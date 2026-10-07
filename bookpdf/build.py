@@ -38,6 +38,7 @@ class BuildOptions:
     cjk_font: str | None
     keep_build: bool
     timeout_s: int
+    log_lines: int = 8
 
 
 @dataclass(frozen=True)
@@ -76,7 +77,8 @@ def build_arc(book: BookInfo, arc: ArcRange, opts: BuildOptions, limit: int | No
     log_path = os.path.join(prepared.workdir, "build.log")
     con.info(f"Compiling with [bold]{opts.engine.name}[/bold] · log: [cyan]{escape(log_path)}[/cyan]")
     estimate = _estimate_pages(prepared.chars, len(prepared.sources))
-    result = texrun.run_compile(opts.engine.command, prepared.workdir, estimate, opts.timeout_s, log_path)
+    result = texrun.run_compile(opts.engine.command, prepared.workdir, estimate, opts.timeout_s, log_path,
+                                opts.log_lines)
     if not result.ok:
         _report_failure(result, prepared, book.index)
         return False

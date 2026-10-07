@@ -55,11 +55,12 @@ Finished PDFs go to `output/<Book> - <Arc>.pdf`.
 | `--build-dir` | `build` | Temporary build files |
 | `--keep-build` | off | Keep the build folder after a successful build |
 | `--timeout` | `180` | Minutes before a build is stopped |
+| `--log-lines` | `8` | Engine output lines shown live under the progress bar (0 hides them) |
 
 ## How a build works
 
 1. **Convert.** Each chapter becomes `build/<book>/<arc>/chapters/ch-0001.tex`, and so on, with a progress bar. The `# Chapter N: Title` heading becomes the chapter title, `[[Chapter N]]` links are removed, and `(TN: ...)` paragraphs are set small and italic. A chapter that fails to convert is listed and skipped.
-2. **Compile.** The bar counts typeset pages. Pass 1 shows an estimated total; later passes know the exact page count. "last output Ns ago" resets whenever the engine prints something and turns yellow after a minute of silence, which is how you tell a slow build from a stuck one.
+2. **Compile.** The bar counts typeset pages. Pass 1 shows an estimated total; later passes know the exact page count. "last output Ns ago" resets whenever the engine prints something and turns yellow after a minute of silence, which is how you tell a slow build from a stuck one. The last few lines of the engine's own output scroll underneath the bar, Docker-style, and collapse into a summary line when the build finishes. Before the first page is typeset (for example while Tectonic downloads its files on the first run) the bar pulses and counts downloaded files.
 3. **Output.** The PDF is copied to `output/` and the build folder is deleted (unless `--keep-build`). On failure the folder is kept, and the error panel names the chapter `.md` file that broke the build plus the full `build.log`.
 
 ## Chinese font

@@ -1,8 +1,9 @@
-"""Run the TeX engine with a live page progress bar.
+"""Run the TeX engine with a live progress bar and a Docker-style output tail.
 
 XeTeX prints "[N" whenever it finishes page N and starts again at 1 on every pass, so those
-markers drive the bar. Pass 1 uses an estimated total; later passes use the exact page count
-of the previous pass. The "last output" timer shows whether the engine is still working.
+markers drive the bar. Before the first page (for example while Tectonic downloads its support
+files) the bar pulses and counts downloaded files instead. The last few output lines scroll
+underneath the bar, so you can always see what the engine is doing.
 """
 
 import collections
@@ -14,16 +15,21 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+from rich.console import Group
+from rich.live import Live
 from rich.markup import escape
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.text import Text
 
 from . import console as con
 
 POLL_SECONDS = 0.25
+REFRESH_PER_SECOND = 8
 MAX_LINES_PER_TICK = 5000
 STALL_WARN_SECONDS = 60
 MAX_ERRORS = 15
 TAIL_LINES = 40
+MAX_LIVE_LINES = 30
 EXIT_WAIT_SECONDS = 60
 NEW_PASS_MIN_PAGES = 3  # "[1" only starts a new pass if the previous pass got further than this
 PHASE_TYPESETTING = "Typesetting"
@@ -38,6 +44,7 @@ _CHAPTER_OPEN_RE = re.compile(r"chapters[/\\](ch-\d+)\.tex")
 _FILE_LINE_RE = re.compile(r"^(?:error:\s*)?(\S*?\.tex):(\d+):\s*(.+)$")
 _BANG_RE = re.compile(r"^!\s*(.+)$")
 _TOOL_ERROR_RE = re.compile(r"^error:\s*(.+)$")
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 
 @dataclass
@@ -65,6 +72,7 @@ class _State:
     pass_no: int = 0
     page: int = 0
     exact_total: int = 0
+    downloads: int = 0
     phase: str = "Starting"
     chapter_id: str = ""
     errors: list = field(default_factory=list)
@@ -117,25 +125,30 @@ def _track_errors(state: _State, line: str) -> None:
         _add_error(state, CompileError(state.chapter_id, "", match.group(1).strip()))
 
 
+def _track_phase(state: _State, line: str) -> None:
+    if _DOWNLOAD_RE.search(line) and state.page == 0 and state.phase != PHASE_WRITING:
+        state.phase = PHASE_DOWNLOADING
+        state.downloads += 1
+    if _PDF_RE.search(line):
+        state.phase = PHASE_WRITING
+
+
 def _handle_line(state: _State, line: str, log) -> None:
     state.last_output = time.monotonic()
-    state.tail.append(line)
     log.write(line + "\n")
+    state.tail.append(_CONTROL_RE.sub("", line.replace("\t", "    ")))
     if _PASS_RE.search(line) and (state.page > 0 or state.pass_no == 0):
         _start_pass(state)
     opened = _CHAPTER_OPEN_RE.findall(line)
     if opened:
         state.chapter_id = opened[-1]
-    if _DOWNLOAD_RE.search(line) and state.page == 0 and state.phase != PHASE_WRITING:
-        state.phase = PHASE_DOWNLOADING
-    if _PDF_RE.search(line):
-        state.phase = PHASE_WRITING
+    _track_phase(state, line)
     _track_pages(state, line)
     _track_errors(state, line)
 
 
 # ----------------------------------------------------------------------
-# Progress display
+# Live display: progress bar + output tail
 # ----------------------------------------------------------------------
 
 def _columns() -> tuple:
@@ -143,22 +156,57 @@ def _columns() -> tuple:
         SpinnerColumn(),
         TextColumn("{task.description}"),
         BarColumn(),
-        TextColumn("{task.completed:>5.0f}/{task.total:.0f} pages"),
+        TextColumn("{task.fields[counter]}"),
         TimeElapsedColumn(),
     )
 
 
+def _known_total(state: _State) -> int | None:
+    """Page total for the bar, or None (pulsing bar) before anything has been typeset."""
+    if state.exact_total:
+        return max(state.exact_total, state.page)
+    if state.page == 0:
+        return None
+    return max(state.estimated, state.page)
+
+
+def _counter(state: _State, total: int | None) -> str:
+    if total is None:
+        if state.phase == PHASE_DOWNLOADING:
+            return f"{state.downloads:,} files"
+        return "waiting for page 1"
+    approx = "" if state.exact_total else "~"
+    return f"{state.page:,}/{approx}{total:,} pages"
+
+
 def _refresh(progress: Progress, task, state: _State) -> None:
-    total = max(state.exact_total or state.estimated, state.page, 1)
+    total = _known_total(state)
     silent = time.monotonic() - state.last_output
     style = "yellow" if silent >= STALL_WARN_SECONDS else "dim"
     if state.phase == PHASE_WRITING or state.pass_no == 0:
         label = state.phase
     else:
-        approx = "" if state.exact_total else " · total estimated"
-        label = f"{state.phase} · pass {state.pass_no}{approx}"
+        label = f"{state.phase} · pass {state.pass_no}"
     description = f"[bold blue]{escape(label)}[/bold blue] [{style}]· last output {silent:.0f}s ago[/{style}]"
-    progress.update(task, completed=min(state.page, total), total=total, description=description)
+    counter = _counter(state, total)
+    if total is None:
+        progress.update(task, description=description, counter=counter)
+    else:
+        progress.update(task, total=total, completed=min(state.page, total), description=description, counter=counter)
+
+
+def _tail_view(state: _State, lines: int) -> Text:
+    """Last non-empty output lines, padded to a fixed height so the display does not jump."""
+    recent = [line for line in state.tail if line.strip()][-lines:]
+    padded = recent + [""] * (lines - len(recent))
+    body = "\n".join("  │ " + line for line in padded)
+    return Text(body, style="dim", no_wrap=True, overflow="ellipsis")
+
+
+def _view(progress: Progress, state: _State, lines: int):
+    if lines <= 0:
+        return progress
+    return Group(progress, _tail_view(state, lines))
 
 
 # ----------------------------------------------------------------------
@@ -223,20 +271,30 @@ def _drain(lines: queue.Queue, state: _State, log) -> bool:
     return False
 
 
-def _stream(lines: queue.Queue, state: _State, timeout_s: int, log_path: str) -> bool:
-    """Show progress until the output ends (True) or the timeout passes (False)."""
+def _stream(lines: queue.Queue, state: _State, timeout_s: int, log_path: str, live_lines: int) -> bool:
+    """Show the live view until the output ends (True) or the timeout passes (False)."""
     deadline = time.monotonic() + timeout_s
     max_ticks = int(timeout_s / POLL_SECONDS) * 4 + 1  # hard bound; the deadline normally ends it
-    with open(log_path, "w", encoding="utf-8") as log, Progress(*_columns(), console=con.console) as progress:
-        task = progress.add_task("Starting", total=state.estimated)
+    progress = Progress(*_columns(), console=con.console)  # drawn by the Live below, never started itself
+    task = progress.add_task("Starting", total=None, counter="starting")
+    with open(log_path, "w", encoding="utf-8") as log, Live(
+        _view(progress, state, live_lines), console=con.console,
+        refresh_per_second=REFRESH_PER_SECOND, transient=True,
+    ) as live:
         for _ in range(max_ticks):
             finished = _drain(lines, state, log)
             _refresh(progress, task, state)
+            live.update(_view(progress, state, live_lines))
             if finished:
                 return True
             if time.monotonic() > deadline:
                 return False
     return False
+
+
+def _duration(seconds: float) -> str:
+    minutes, secs = divmod(int(seconds), 60)
+    return f"{minutes}m {secs:02d}s" if minutes else f"{secs}s"
 
 
 def _result(state: _State, ok: bool, message: str) -> CompileResult:
@@ -250,9 +308,11 @@ def _result(state: _State, ok: bool, message: str) -> CompileResult:
     )
 
 
-def run_compile(command: tuple, workdir: str, estimated_pages: int, timeout_s: int, log_path: str) -> CompileResult:
-    """Run the engine in workdir, streaming its output to log_path behind a progress bar."""
+def run_compile(command: tuple, workdir: str, estimated_pages: int, timeout_s: int, log_path: str,
+                live_lines: int = 8) -> CompileResult:
+    """Run the engine in workdir, streaming its output to log_path behind the live view."""
     started = time.monotonic()
+    live_lines = max(0, min(int(live_lines), MAX_LIVE_LINES))
     state = _State(estimated=max(int(estimated_pages), 1), started=started, last_output=started)
     proc, problem = _spawn(command, workdir)
     if proc is None:
@@ -260,7 +320,7 @@ def run_compile(command: tuple, workdir: str, estimated_pages: int, timeout_s: i
     lines = queue.Queue()
     threading.Thread(target=_reader, args=(proc.stdout, lines), daemon=True).start()
     try:
-        finished = _stream(lines, state, timeout_s, log_path)
+        finished = _stream(lines, state, timeout_s, log_path, live_lines)
     except KeyboardInterrupt:
         _stop(proc)
         return _result(state, False, "Build cancelled with Ctrl+C.")
@@ -275,4 +335,6 @@ def run_compile(command: tuple, workdir: str, estimated_pages: int, timeout_s: i
         return _result(state, False, f"The TeX engine exited with code {code}.")
     if not os.path.isfile(os.path.join(workdir, "main.pdf")):
         return _result(state, False, "The engine finished but no main.pdf was produced.")
-    return _result(state, True, "")
+    result = _result(state, True, "")
+    con.ok(f"Typeset {result.pages:,} pages in {_duration(result.seconds)}")
+    return result

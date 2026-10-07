@@ -215,6 +215,7 @@ def _build_options(args, tool_dir: str) -> build.BuildOptions | None:
         cjk_font=args.cjk_font,
         keep_build=args.keep_build,
         timeout_s=args.timeout * 60,
+        log_lines=args.log_lines,
     )
 
 
