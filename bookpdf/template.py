@@ -63,6 +63,8 @@ MAIN_TEMPLATE = r"""\documentclass[14pt, a4paper]{extarticle}
 % ==========================================
 \setlength{\parindent}{1cm}
 \setlength{\parskip}{10pt}
+% Let TeX stretch a tight line a little rather than push text into the right margin
+\setlength{\emergencystretch}{3em}
 
 % ==========================================
 % 4. SECTION/CHAPTER FORMATTING

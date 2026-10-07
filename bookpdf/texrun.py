@@ -46,6 +46,8 @@ _BANG_RE = re.compile(r"^(?:!\s*)+(.+)$")
 _LEADING_BANGS_RE = re.compile(r"^(?:!\s*)+")
 _TOOL_ERROR_RE = re.compile(r"^error:\s*(.+)$")
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+_MISSING_CHAR_RE = re.compile(r"Missing character: There is no .*?\(U\+([0-9A-Fa-f]{4,6})\)")
+MAX_MISSING_CHARS = 200
 
 
 @dataclass
@@ -64,6 +66,7 @@ class CompileResult:
     message: str
     errors: list
     tail: list
+    missing_chars: dict = field(default_factory=dict)  # "U+7570" -> set of chapter ids
 
 
 @dataclass
@@ -75,6 +78,7 @@ class _State:
     page: int = 0
     exact_total: int = 0
     downloads: int = 0
+    missing_chars: dict = field(default_factory=dict)
     phase: str = "Starting"
     chapter_id: str = ""
     errors: list = field(default_factory=list)
@@ -136,6 +140,17 @@ def _track_phase(state: _State, line: str) -> None:
         state.phase = PHASE_WRITING
 
 
+def _track_missing(state: _State, line: str) -> None:
+    """Remember characters the fonts could not print (they come out blank in the PDF)."""
+    match = _MISSING_CHAR_RE.search(line)
+    if not match:
+        return
+    key = "U+" + match.group(1).upper()
+    if key not in state.missing_chars and len(state.missing_chars) >= MAX_MISSING_CHARS:
+        return
+    state.missing_chars.setdefault(key, set()).add(state.chapter_id)
+
+
 def _handle_line(state: _State, line: str, log) -> None:
     state.last_output = time.monotonic()
     log.write(line + "\n")
@@ -148,6 +163,7 @@ def _handle_line(state: _State, line: str, log) -> None:
     _track_phase(state, line)
     _track_pages(state, line)
     _track_errors(state, line)
+    _track_missing(state, line)
 
 
 # ----------------------------------------------------------------------
@@ -308,6 +324,7 @@ def _result(state: _State, ok: bool, message: str) -> CompileResult:
         message=message,
         errors=list(state.errors),
         tail=list(state.tail),
+        missing_chars={code: set(ids) for code, ids in state.missing_chars.items()},
     )
 
 

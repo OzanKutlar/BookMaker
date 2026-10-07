@@ -49,6 +49,7 @@ _LATEX_SPECIALS = {
 class ConvertedChapter:
     title: str  # plain text, not yet escaped
     body: str   # LaTeX
+    warnings: tuple = ()  # automatic source repairs worth telling the user about
 
 
 def latex_escape(text: str) -> str:
@@ -146,6 +147,32 @@ def smart_quotes(text: str) -> str:
     return _OPEN_SINGLE_RE.sub(r"\1‘", text).replace("'", "’")
 
 
+MAX_QUOTE_DEPTH = 3     # LaTeX allows 6 nested lists/quotes; leave room for lists inside quotes
+MAX_LINES_LISTED = 5
+_CONFLICT_LINE_RE = re.compile(r"^(?:<{7}|>{7})(?:[ \t].*)?$")
+_CONFLICT_STRIP_RE = re.compile(r"^(?:<{7}|={7}|>{7})(?:[ \t].*)?$\n?", re.MULTILINE)
+_DEEP_QUOTE_RE = re.compile(r"^((?:[ \t]{0,3}>){%d})(?:[ \t]*>)+" % MAX_QUOTE_DEPTH, re.MULTILINE)
+
+
+def _line_list(numbers: list[int]) -> str:
+    shown = ", ".join(str(n) for n in numbers[:MAX_LINES_LISTED])
+    return shown + (" …" if len(numbers) > MAX_LINES_LISTED else "")
+
+
+def _repair_source(text: str) -> tuple[str, list[str]]:
+    """Fix input that would break the build: leftover git conflict markers and runaway quote nesting."""
+    warnings = []
+    markers = [i + 1 for i, line in enumerate(text.split("\n")) if _CONFLICT_LINE_RE.match(line)]
+    if markers:
+        # '=======' lines are only removed when real conflict markers prove the file was mid-merge.
+        text = _CONFLICT_STRIP_RE.sub("", text)
+        warnings.append(f"removed git merge-conflict marker(s) on line {_line_list(markers)}; check the text around them")
+    text, flattened = _DEEP_QUOTE_RE.subn(r"\1", text)
+    if flattened:
+        warnings.append(f"flattened {flattened} quote line(s) nested deeper than {MAX_QUOTE_DEPTH} levels")
+    return text, warnings
+
+
 def _clean(md_text: str) -> str:
     text = _WIKILINK_LINE_RE.sub("", md_text)
     text = _WIKILINK_RE.sub(lambda m: m.group(1), text)
@@ -171,12 +198,17 @@ def _render(md_text: str) -> str:
 
 def convert_markdown(md_text: str, file_stem: str = "") -> ConvertedChapter:
     text = md_text.replace("\r\n", "\n").replace("\r", "\n")
+    text, warnings = _repair_source(text)
     title, body = split_title(text, file_stem)
     body, notes = _extract_tnotes(fix_markdown_line_breaks(_clean(body)))
     latex = _render(body)
     for i, note in enumerate(notes):
         latex = latex.replace(_TNOTE_TOKEN.format(i), r"\tnote{" + _render(note) + "}", 1)
-    return ConvertedChapter(title=smart_quotes(title), body=latex.replace(_DOLLAR_TOKEN, r"\$"))
+    return ConvertedChapter(
+        title=smart_quotes(title),
+        body=latex.replace(_DOLLAR_TOKEN, r"\$"),
+        warnings=tuple(warnings),
+    )
 
 
 def convert_file(path: str) -> ConvertedChapter:

@@ -47,6 +47,7 @@ class _Prepared:
     sources: dict   # "ch-0001" -> (canonical chapter number, label in this PDF)
     chars: int
     failed: list    # (chapter number, reason)
+    notices: tuple = ()  # (chapter number, automatic repair worth checking)
 
 
 # ----------------------------------------------------------------------
@@ -74,11 +75,13 @@ def build_arc(book: BookInfo, arc: ArcRange, opts: BuildOptions, limit: int | No
     if prepared is None:
         return False
     _report_conversion_failures(prepared.failed)
+    _report_notices(prepared.notices)
     log_path = os.path.join(prepared.workdir, "build.log")
     con.info(f"Compiling with [bold]{opts.engine.name}[/bold] · log: [cyan]{escape(log_path)}[/cyan]")
     estimate = _estimate_pages(prepared.chars, len(prepared.sources))
     result = texrun.run_compile(opts.engine.command, prepared.workdir, estimate, opts.timeout_s, log_path,
                                 opts.log_lines)
+    _report_missing_chars(result.missing_chars, prepared.sources)
     if not result.ok:
         _report_failure(result, prepared, book.index)
         return False
@@ -100,7 +103,7 @@ def _prepare(book: BookInfo, arc: ArcRange, opts: BuildOptions, numbers: list[in
     workdir = _workspace(opts.build_dir, book.title, arc, limit)
     chapter_dir = os.path.join(workdir, "chapters")
     os.makedirs(chapter_dir, exist_ok=True)
-    sources, chars, failed = _convert_all(book.index, arc, numbers, chapter_dir)
+    sources, chars, failed, notices = _convert_all(book.index, arc, numbers, chapter_dir)
     if not sources:
         con.fail("Every chapter failed to convert; nothing to compile.")
         _report_conversion_failures(failed)
@@ -111,7 +114,7 @@ def _prepare(book: BookInfo, arc: ArcRange, opts: BuildOptions, numbers: list[in
     _write_text(os.path.join(workdir, template.MANIFEST_NAME), _manifest(sources))
     title_line = f"{book.title} - {arc.name}"
     _write_text(os.path.join(workdir, "main.tex"), template.render_main(title_line, book.author, cjk_setup))
-    return _Prepared(workdir, sources, chars, failed)
+    return _Prepared(workdir, sources, chars, failed, tuple(notices))
 
 
 def _conversion_columns() -> tuple:
@@ -125,8 +128,8 @@ def _conversion_columns() -> tuple:
     )
 
 
-def _convert_all(index: ChapterIndex, arc: ArcRange, numbers: list[int], chapter_dir: str) -> tuple[dict, int, list]:
-    sources, failed, chars, printed = {}, [], 0, 0
+def _convert_all(index: ChapterIndex, arc: ArcRange, numbers: list[int], chapter_dir: str) -> tuple[dict, int, list, list]:
+    sources, failed, notices, chars, printed = {}, [], [], 0, 0
     with Progress(*_conversion_columns(), console=con.console) as progress:
         task = progress.add_task("Converting", total=len(numbers))
         for number in numbers:
@@ -134,7 +137,8 @@ def _convert_all(index: ChapterIndex, arc: ArcRange, numbers: list[int], chapter
             afterword = arc.is_afterword(number)
             file_id = f"ch-{len(sources) + 1:04d}"
             tex_path = os.path.join(chapter_dir, file_id + ".tex")
-            written, reason = _convert_one(index.path(number), afterword, tex_path)
+            written, reason, warnings = _convert_one(index.path(number), afterword, tex_path)
+            notices.extend((number, warning) for warning in warnings)
             if written is None:
                 failed.append((number, reason))
             else:
@@ -143,21 +147,21 @@ def _convert_all(index: ChapterIndex, arc: ArcRange, numbers: list[int], chapter
                 chars += written
             progress.advance(task)
         progress.update(task, description="Converted")
-    return sources, chars, failed
+    return sources, chars, failed, notices
 
 
-def _convert_one(md_path: str, afterword: bool, tex_path: str) -> tuple[int | None, str]:
-    """Convert and write one chapter. Returns (body length, "") or (None, reason)."""
+def _convert_one(md_path: str, afterword: bool, tex_path: str) -> tuple[int | None, str, tuple]:
+    """Convert and write one chapter. Returns (body length, "", warnings) or (None, reason, ())."""
     try:
         chapter = convert.convert_file(md_path)
     except Exception as e:  # mistletoe can raise anything on odd input; skip just this chapter
-        return None, f"{type(e).__name__}: {e}"
+        return None, f"{type(e).__name__}: {e}", ()
     text = convert.section_command(chapter.title, numbered=not afterword) + chapter.body + "\n"
     try:
         _write_text(tex_path, text)
     except OSError as e:
-        return None, f"could not write {os.path.basename(tex_path)}: {e}"
-    return len(chapter.body), ""
+        return None, f"could not write {os.path.basename(tex_path)}: {e}", ()
+    return len(chapter.body), "", chapter.warnings
 
 
 def _manifest(sources: dict) -> str:
@@ -253,6 +257,43 @@ def _remove_workspace(workdir: str) -> None:
         shutil.rmtree(workdir)
     except OSError as e:
         con.warn(f"Could not remove the build folder {escape(workdir)}: {escape(str(e))}")
+
+
+MAX_MISSING_SHOWN = 15
+MAX_CHAPTERS_PER_CHAR = 5
+
+
+def _report_notices(notices) -> None:
+    """Problems in the chapter files that were repaired automatically but deserve a look."""
+    if not notices:
+        return
+    lines = [f"Chapter {number}: {escape(note)}" for number, note in notices[:MAX_FAILURES_SHOWN]]
+    if len(notices) > MAX_FAILURES_SHOWN:
+        lines.append(f"… and {len(notices) - MAX_FAILURES_SHOWN} more")
+    con.panel("\n".join(lines), title="Fixed automatically, worth checking", style="yellow")
+
+
+def _char_label(code: str) -> str:
+    try:
+        return f"{chr(int(code[2:], 16))} ({code})"
+    except ValueError:
+        return code
+
+
+def _report_missing_chars(missing: dict, sources: dict) -> None:
+    """Characters no font could print come out blank on paper, so list them with their chapters."""
+    if not missing:
+        return
+    lines = []
+    for code in sorted(missing)[:MAX_MISSING_SHOWN]:
+        numbers = sorted(sources[cid][0] for cid in missing[code] if cid in sources)
+        where = ", ".join(f"Chapter {n}" for n in numbers[:MAX_CHAPTERS_PER_CHAR]) or "front matter"
+        lines.append(f"{_char_label(code)} · {where}")
+    if len(missing) > MAX_MISSING_SHOWN:
+        lines.append(f"… and {len(missing) - MAX_MISSING_SHOWN} more")
+    lines.append("[dim]These print as blanks. A font that also covers traditional Chinese fixes them, "
+                 "e.g. --cjk-font C:\\Windows\\Fonts\\simsun.ttc[/dim]")
+    con.panel("\n".join(lines), title=f"{len(missing)} character(s) missing from the Chinese font", style="yellow")
 
 
 def _report_conversion_failures(failed: list) -> None:
