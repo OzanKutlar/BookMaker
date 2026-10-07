@@ -8,6 +8,11 @@ DEFAULT_CJK_FONT = (
 )
 
 
+# Must not share a base name with the chapters/ folder: \input tries the bare name first,
+# and on Windows opening a folder as a file fails with "Access is denied".
+MANIFEST_NAME = "chapter-list.tex"
+
+
 def cjk_font_by_name(name: str) -> str:
     return r"\setCJKmainfont{" + name + "}"
 
@@ -74,7 +79,7 @@ MAIN_TEMPLATE = r"""\documentclass[14pt, a4paper]{extarticle}
 % BOOK METADATA (filled in by bookpdf)
 % ==========================================
 \title{\textbf{<<TITLE>>}}
-\author{<<AUTHOR>>}
+\author{\parbox{0.9\textwidth}{\centering <<AUTHOR>>}} % long author names wrap instead of overflowing
 \date{\today}
 
 % ==========================================
@@ -101,9 +106,9 @@ MAIN_TEMPLATE = r"""\documentclass[14pt, a4paper]{extarticle}
 \clearpage
 
 % ==========================================
-% CHAPTERS: chapters.tex is written by bookpdf for this arc
+% CHAPTERS: the chapter list is written by bookpdf for this arc
 % ==========================================
-\input{chapters}
+\input{<<MANIFEST>>}
 
 \end{document}
 """
@@ -112,6 +117,7 @@ MAIN_TEMPLATE = r"""\documentclass[14pt, a4paper]{extarticle}
 def render_main(title: str, author: str, cjk_setup: str) -> str:
     return (
         MAIN_TEMPLATE
+        .replace("<<MANIFEST>>", MANIFEST_NAME)
         .replace("<<CJK_FONT>>", cjk_setup)
         .replace("<<TITLE>>", latex_escape(title))
         .replace("<<AUTHOR>>", latex_escape(author))

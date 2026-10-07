@@ -108,7 +108,7 @@ def _prepare(book: BookInfo, arc: ArcRange, opts: BuildOptions, numbers: list[in
     cjk_setup = _cjk_font_setup(opts.cjk_font, workdir)
     if cjk_setup is None:
         return None
-    _write_text(os.path.join(workdir, "chapters.tex"), _manifest(sources))
+    _write_text(os.path.join(workdir, template.MANIFEST_NAME), _manifest(sources))
     title_line = f"{book.title} - {arc.name}"
     _write_text(os.path.join(workdir, "main.tex"), template.render_main(title_line, book.author, cjk_setup))
     return _Prepared(workdir, sources, chars, failed)
@@ -161,7 +161,7 @@ def _convert_one(md_path: str, afterword: bool, tex_path: str) -> tuple[int | No
 
 
 def _manifest(sources: dict) -> str:
-    return "".join(r"\input{chapters/" + file_id + "}" + "\n" for file_id in sources)
+    return "".join(r"\input{chapters/" + file_id + ".tex}" + "\n" for file_id in sources)
 
 
 def _cjk_font_setup(font: str | None, workdir: str) -> str | None:
@@ -266,10 +266,11 @@ def _report_conversion_failures(failed: list) -> None:
 
 def _describe_error(error, sources: dict, index: ChapterIndex) -> str:
     message = escape(error.message)
-    where = f", line {error.line} of its .tex" if error.line else ""
     source = sources.get(error.chapter_id)
     if source is None:
-        return f"• {message}{where}"
+        place = f" ({escape(error.file)}, line {error.line})" if error.file and error.line else ""
+        return f"• {message}{place}"
+    where = f", line {error.line} of its .tex" if error.line else ""
     number, label = source
     md_name = escape(os.path.basename(index.path(number)))
     return f"• [bold]Chapter {number}[/bold] ({label} in this PDF{where}) → {md_name}\n  {message}"

@@ -42,7 +42,8 @@ _PDF_RE = re.compile(r"xdvipdfmx", re.IGNORECASE)
 _DOWNLOAD_RE = re.compile(r"download", re.IGNORECASE)
 _CHAPTER_OPEN_RE = re.compile(r"chapters[/\\](ch-\d+)\.tex")
 _FILE_LINE_RE = re.compile(r"^(?:error:\s*)?(\S*?\.tex):(\d+):\s*(.+)$")
-_BANG_RE = re.compile(r"^!\s*(.+)$")
+_BANG_RE = re.compile(r"^(?:!\s*)+(.+)$")
+_LEADING_BANGS_RE = re.compile(r"^(?:!\s*)+")
 _TOOL_ERROR_RE = re.compile(r"^error:\s*(.+)$")
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
@@ -52,6 +53,7 @@ class CompileError:
     chapter_id: str  # e.g. "ch-0012", or "" when unknown
     line: str        # TeX line number, or ""
     message: str
+    file: str = ""   # .tex file the error points at, or ""
 
 
 @dataclass
@@ -117,12 +119,13 @@ def _track_errors(state: _State, line: str) -> None:
     match = _FILE_LINE_RE.match(line)
     if match:
         opened = _CHAPTER_OPEN_RE.findall(match.group(1))
-        chapter = opened[-1] if opened else state.chapter_id
-        _add_error(state, CompileError(chapter, match.group(2), match.group(3).strip()))
+        chapter = opened[-1] if opened else ""  # error is in main.tex or another non-chapter file
+        message = _LEADING_BANGS_RE.sub("", match.group(3).strip())
+        _add_error(state, CompileError(chapter, match.group(2), message, os.path.basename(match.group(1))))
         return
     match = _BANG_RE.match(line) or _TOOL_ERROR_RE.match(line)
     if match:
-        _add_error(state, CompileError(state.chapter_id, "", match.group(1).strip()))
+        _add_error(state, CompileError(state.chapter_id, "", _LEADING_BANGS_RE.sub("", match.group(1).strip())))
 
 
 def _track_phase(state: _State, line: str) -> None:
