@@ -96,26 +96,61 @@ def fix_markdown_line_breaks(md_text: str) -> str:
     return _SINGLE_NEWLINE_RE.sub("\n\n", text)
 
 
+_PLAIN_TITLE_RE = re.compile(r"^(?:Chapter|Ch\.?)\s*\d+\b\s*[:：.\-–—]?\s*(.*)$", re.IGNORECASE)
+_EMPHASIS_WRAP_RE = re.compile(r"^(\*\*|__|\*|_)(.+)\1$")
+MAX_PLAIN_TITLE_LENGTH = 200
+
+
+def _title_from_line(line: str) -> str | None:
+    """Title from '# Chapter N: Title', '**Chapter N: Title**' or a plain 'Chapter N: Title' line.
+
+    Returns None when the line is not a title line. Any Markdown heading counts as a title;
+    a plain line only counts when it starts with 'Chapter N'.
+    """
+    text = line.strip()
+    heading = _HEADING_RE.match(text)
+    if heading:
+        text = heading.group(1).strip()
+    wrapped = _EMPHASIS_WRAP_RE.match(text)
+    if wrapped:
+        text = wrapped.group(2).strip()
+    if heading:
+        return _CHAPTER_PREFIX_RE.sub("", text, count=1).strip()
+    plain = _PLAIN_TITLE_RE.match(text)
+    if plain and len(text) <= MAX_PLAIN_TITLE_LENGTH:
+        return plain.group(1).strip()
+    return None
+
+
 def split_title(md_text: str, file_stem: str = "") -> tuple[str, str]:
     """Return (title, body). The first heading is removed from the body."""
     lines = md_text.split("\n")
     for i, line in enumerate(lines[:MAX_TITLE_SCAN_LINES]):
         if not line.strip():
             continue
-        match = _HEADING_RE.match(line)
-        if match:
-            title = _CHAPTER_PREFIX_RE.sub("", match.group(1), count=1).strip()
+        title = _title_from_line(line)
+        if title is not None:
             return title, "\n".join(lines[:i] + lines[i + 1:])
         break
     match = _FILENAME_TITLE_RE.match(file_stem)
     return (match.group(1).strip() if match else ""), md_text
 
 
+_OPEN_DOUBLE_RE = re.compile(r'(^|[\s(\[{—–/‘*_-])"', re.MULTILINE)
+_OPEN_SINGLE_RE = re.compile(r"(^|[\s(\[{—–/“*_-])'", re.MULTILINE)
+
+
+def smart_quotes(text: str) -> str:
+    """Straight quotes -> curly quotes. XeLaTeX would otherwise print every straight double quote as a closing quote."""
+    text = _OPEN_DOUBLE_RE.sub(r"\1“", text).replace('"', "”")
+    return _OPEN_SINGLE_RE.sub(r"\1‘", text).replace("'", "’")
+
+
 def _clean(md_text: str) -> str:
     text = _WIKILINK_LINE_RE.sub("", md_text)
     text = _WIKILINK_RE.sub(lambda m: m.group(1), text)
     text = _IMAGE_RE.sub("", text)
-    return text.replace("$", _DOLLAR_TOKEN)  # keeps mistletoe from treating $...$ as math
+    return smart_quotes(text).replace("$", _DOLLAR_TOKEN)  # the $ swap keeps mistletoe from treating $...$ as math
 
 
 def _extract_tnotes(md_text: str) -> tuple[str, list[str]]:
@@ -141,7 +176,7 @@ def convert_markdown(md_text: str, file_stem: str = "") -> ConvertedChapter:
     latex = _render(body)
     for i, note in enumerate(notes):
         latex = latex.replace(_TNOTE_TOKEN.format(i), r"\tnote{" + _render(note) + "}", 1)
-    return ConvertedChapter(title=title, body=latex.replace(_DOLLAR_TOKEN, r"\$"))
+    return ConvertedChapter(title=smart_quotes(title), body=latex.replace(_DOLLAR_TOKEN, r"\$"))
 
 
 def convert_file(path: str) -> ConvertedChapter:

@@ -36,6 +36,8 @@ MAIN_TEMPLATE = r"""\documentclass[14pt, a4paper]{extarticle}
 ]{texgyretermes}            % TeX Gyre Termes: a Times New Roman clone
 \usepackage{xeCJK}          % Chinese characters (names, translator's notes)
 <<CJK_FONT>>
+% Keep curly quotes, dashes and ellipses in the Latin font (xeCJK would set them full-width)
+\xeCJKDeclareCharClass{Default}{"2014, "2018, "2019, "201C, "201D, "2026}
 \usepackage{microtype}      % Typographical alignment
 \usepackage{setspace}       % Line spacing
 \usepackage{titlesec}       % Section title formatting
@@ -87,19 +89,24 @@ MAIN_TEMPLATE = r"""\documentclass[14pt, a4paper]{extarticle}
 % ==========================================
 
 \newcommand{\tnote}[1]{{\footnotesize\itshape #1\par}}
+\makeatletter
+\newcommand{\booktoc}{\@starttoc{toc}} % TOC entries without the built-in heading
+\makeatother
 \begin{document}
 
 \maketitle
 
 \clearpage
 
-% Compact, two-column, traversable Table of Contents
-\renewcommand{\contentsname}{\centering \fontsize{14}{17}\bfseries TABLE OF CONTENTS}
+% Compact, two-column, traversable Table of Contents.
+% The heading sits above the columns so it spans the page instead of filling column one.
+{\centering\fontsize{14}{17}\selectfont\bfseries TABLE OF CONTENTS\par}
+\vspace{1.5\baselineskip}
 {
   \setlength{\parskip}{2pt} % Compact spacing between entries in TOC
   \begin{multicols}{2}
     \footnotesize
-    \tableofcontents
+    \booktoc
   \end{multicols}
 }
 
