@@ -219,10 +219,48 @@ def convert_file(path: str) -> ConvertedChapter:
     return convert_markdown(md_text, stem)
 
 
-def section_command(title: str, numbered: bool) -> str:
-    """Chapter heading. Numbered chapters count from 1 per PDF; afterwords get no number."""
+TOC_ELLIPSIS = "…"
+_TOC_TRIM_CHARS = " ,;:.-–—"
+MIN_WORD_CUT_RATIO = 0.5  # back up to a word boundary only if at least half the room stays used
+
+
+def toc_title(title: str, max_len: int) -> str:
+    """Shorten a title for the table of contents: cut at a word boundary and end with '…'.
+
+    max_len <= 0 keeps the whole title. The result never exceeds max_len characters.
+    """
+    text = " ".join(str(title or "").split())
+    limit = int(max_len)
+    if limit <= 0 or len(text) <= limit:
+        return text
+    cut = text[:limit - 1]  # leave room for the ellipsis
+    if text[len(cut)] != " ":  # the cut lands inside a word
+        space = cut.rfind(" ")
+        if space >= limit * MIN_WORD_CUT_RATIO:
+            cut = cut[:space]
+    return cut.rstrip(_TOC_TRIM_CHARS) + TOC_ELLIPSIS
+
+
+def _toc_entry(title: str, safe: str, toc_max: int) -> str:
+    """TOC text: the short title in the contents, the full one in the PDF bookmark."""
+    short = latex_escape(toc_title(title, toc_max))
+    if short == safe:
+        return safe
+    return r"\texorpdfstring{" + short + "}{" + safe + "}"
+
+
+def section_command(title: str, numbered: bool, toc_max: int = 0) -> str:
+    """Chapter heading. Numbered chapters count from 1 per PDF; afterwords get no number.
+
+    The table of contents shows the title cut to toc_max characters (0 = whole); the heading
+    on the page and the PDF bookmark keep the full title.
+    """
     safe = latex_escape(title)
+    entry = _toc_entry(title, safe, toc_max)
     if numbered:
-        return r"\section{" + safe + "}" + "\n\n"
+        if entry == safe:
+            return r"\section{" + safe + "}" + "\n\n"
+        # Braces keep a ']' inside the title from ending the optional argument early.
+        return r"\section[{" + entry + "}]{" + safe + "}" + "\n\n"
     return (r"\section*{" + safe + "}" + "\n"
-            + r"\phantomsection\addcontentsline{toc}{section}{" + safe + "}" + "\n\n")
+            + r"\phantomsection\addcontentsline{toc}{section}{" + entry + "}" + "\n\n")

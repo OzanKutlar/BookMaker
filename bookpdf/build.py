@@ -16,7 +16,6 @@ from .chapters import ChapterIndex, format_ranges
 from .engine import Engine
 
 CHARS_PER_PAGE = 1900        # rough fill of one 14pt A4 page, used only for the pass-1 estimate
-TOC_ENTRIES_PER_PAGE = 80
 MAX_FAILURES_SHOWN = 10
 FONT_EXTENSIONS = (".otf", ".ttf", ".ttc")
 _ILLEGAL_FILENAME_CHARS = '\\/:*?"<>|'
@@ -39,6 +38,8 @@ class BuildOptions:
     keep_build: bool
     timeout_s: int
     log_lines: int = 8
+    toc_layout: template.TocLayout = template.TOC_LAYOUTS[template.DEFAULT_DENSITY]
+    toc_title_length: int | None = None  # None: use the layout's own cut-off
 
 
 @dataclass(frozen=True)
@@ -78,7 +79,7 @@ def build_arc(book: BookInfo, arc: ArcRange, opts: BuildOptions, limit: int | No
     _report_notices(prepared.notices)
     log_path = os.path.join(prepared.workdir, "build.log")
     con.info(f"Compiling with [bold]{opts.engine.name}[/bold] · log: [cyan]{escape(log_path)}[/cyan]")
-    estimate = _estimate_pages(prepared.chars, len(prepared.sources))
+    estimate = _estimate_pages(prepared.chars, len(prepared.sources), opts.toc_layout.entries_per_page)
     result = texrun.run_compile(opts.engine.command, prepared.workdir, estimate, opts.timeout_s, log_path,
                                 opts.log_lines)
     _report_missing_chars(result.missing_chars, prepared.sources)
@@ -103,7 +104,7 @@ def _prepare(book: BookInfo, arc: ArcRange, opts: BuildOptions, numbers: list[in
     workdir = _workspace(opts.build_dir, book.title, arc, limit)
     chapter_dir = os.path.join(workdir, "chapters")
     os.makedirs(chapter_dir, exist_ok=True)
-    sources, chars, failed, notices = _convert_all(book.index, arc, numbers, chapter_dir)
+    sources, chars, failed, notices = _convert_all(book.index, arc, numbers, chapter_dir, _toc_title_length(opts))
     if not sources:
         con.fail("Every chapter failed to convert; nothing to compile.")
         _report_conversion_failures(failed)
@@ -113,8 +114,15 @@ def _prepare(book: BookInfo, arc: ArcRange, opts: BuildOptions, numbers: list[in
         return None
     _write_text(os.path.join(workdir, template.MANIFEST_NAME), _manifest(sources))
     title_line = f"{book.title} - {arc.name}"
-    _write_text(os.path.join(workdir, "main.tex"), template.render_main(title_line, book.author, cjk_setup))
+    # len(sources) is at least the highest printed chapter number, so it sizes the TOC number column.
+    main = template.render_main(title_line, book.author, cjk_setup, opts.toc_layout, len(sources))
+    _write_text(os.path.join(workdir, "main.tex"), main)
     return _Prepared(workdir, sources, chars, failed, tuple(notices))
+
+
+def _toc_title_length(opts: BuildOptions) -> int:
+    length = opts.toc_layout.title_length if opts.toc_title_length is None else opts.toc_title_length
+    return max(0, int(length))
 
 
 def _conversion_columns() -> tuple:
@@ -128,7 +136,8 @@ def _conversion_columns() -> tuple:
     )
 
 
-def _convert_all(index: ChapterIndex, arc: ArcRange, numbers: list[int], chapter_dir: str) -> tuple[dict, int, list, list]:
+def _convert_all(index: ChapterIndex, arc: ArcRange, numbers: list[int], chapter_dir: str,
+                 toc_max: int) -> tuple[dict, int, list, list]:
     sources, failed, notices, chars, printed = {}, [], [], 0, 0
     with Progress(*_conversion_columns(), console=con.console) as progress:
         task = progress.add_task("Converting", total=len(numbers))
@@ -137,7 +146,7 @@ def _convert_all(index: ChapterIndex, arc: ArcRange, numbers: list[int], chapter
             afterword = arc.is_afterword(number)
             file_id = f"ch-{len(sources) + 1:04d}"
             tex_path = os.path.join(chapter_dir, file_id + ".tex")
-            written, reason, warnings = _convert_one(index.path(number), afterword, tex_path)
+            written, reason, warnings = _convert_one(index.path(number), afterword, tex_path, toc_max)
             notices.extend((number, warning) for warning in warnings)
             if written is None:
                 failed.append((number, reason))
@@ -150,13 +159,13 @@ def _convert_all(index: ChapterIndex, arc: ArcRange, numbers: list[int], chapter
     return sources, chars, failed, notices
 
 
-def _convert_one(md_path: str, afterword: bool, tex_path: str) -> tuple[int | None, str, tuple]:
+def _convert_one(md_path: str, afterword: bool, tex_path: str, toc_max: int) -> tuple[int | None, str, tuple]:
     """Convert and write one chapter. Returns (body length, "", warnings) or (None, reason, ())."""
     try:
         chapter = convert.convert_file(md_path)
     except Exception as e:  # mistletoe can raise anything on odd input; skip just this chapter
         return None, f"{type(e).__name__}: {e}", ()
-    text = convert.section_command(chapter.title, numbered=not afterword) + chapter.body + "\n"
+    text = convert.section_command(chapter.title, numbered=not afterword, toc_max=toc_max) + chapter.body + "\n"
     try:
         _write_text(tex_path, text)
     except OSError as e:
@@ -209,9 +218,10 @@ def _write_text(path: str, text: str) -> None:
         f.write(text)
 
 
-def _estimate_pages(chars: int, chapter_count: int) -> int:
+def _estimate_pages(chars: int, chapter_count: int, toc_entries_per_page: int) -> int:
     # Each chapter starts on a new page, so about half a page per chapter is left empty.
-    return int(chars / CHARS_PER_PAGE + chapter_count * 0.5 + chapter_count / TOC_ENTRIES_PER_PAGE + 2)
+    toc_pages = chapter_count / max(int(toc_entries_per_page), 1)
+    return int(chars / CHARS_PER_PAGE + chapter_count * 0.5 + toc_pages + 2)
 
 
 # ----------------------------------------------------------------------

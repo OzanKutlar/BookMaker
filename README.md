@@ -56,12 +56,20 @@ Finished PDFs go to `output/<Book> - <Arc>.pdf`.
 | `--keep-build` | off | Keep the build folder after a successful build |
 | `--timeout` | `180` | Minutes before a build is stopped |
 | `--log-lines` | `8` | Engine output lines shown live under the progress bar (0 hides them) |
+| `--density` | `tight` | Table of contents layout: `tight` (3 columns, titles cut at 30 characters) or `loose` (2 columns, 50 characters) |
+| `--toc-title-length` | per density | Cut TOC titles after this many characters (10–200); `0` never cuts |
 
 ## How a build works
 
 1. **Convert.** Each chapter becomes `build/<book>/<arc>/chapters/ch-0001.tex`, and so on, with a progress bar. The `# Chapter N: Title` heading becomes the chapter title, `[[Chapter N]]` links are removed, and `(TN: ...)` paragraphs are set small and italic. A chapter that fails to convert is listed and skipped.
 2. **Compile.** The bar counts typeset pages. Pass 1 shows an estimated total; later passes know the exact page count. "last output Ns ago" resets whenever the engine prints something and turns yellow after a minute of silence, which is how you tell a slow build from a stuck one. The last few lines of the engine's own output scroll underneath the bar, Docker-style, and collapse into a summary line when the build finishes. Before the first page is typeset (for example while Tectonic downloads its files on the first run) the bar pulses and counts downloaded files.
 3. **Output.** The PDF is copied to `output/` and the build folder is deleted (unless `--keep-build`). On failure the folder is kept, and the error panel names the chapter `.md` file that broke the build plus the full `build.log`.
+
+## Table of contents
+
+The table of contents is set small and in several columns, so even a 1,000+ chapter volume needs only a few pages. The chapter-number column is sized to the biggest chapter number in each PDF, so 4- and 5-digit numbers never run into the titles. Long titles are cut at a word boundary and end with `…`, but only in the contents: the chapter heading and the PDF bookmark keep the full title.
+
+    python bookpdf.py --density loose --toc-title-length 60
 
 ## Chinese font
 

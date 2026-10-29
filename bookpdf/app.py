@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from rich.markup import escape
 
-from . import arcs, ask, build, chapters, define, display, engine
+from . import arcs, ask, build, chapters, define, display, engine, template
 from . import console as con
 from . import library as lib
 
@@ -216,6 +216,8 @@ def _build_options(args, tool_dir: str) -> build.BuildOptions | None:
         keep_build=args.keep_build,
         timeout_s=args.timeout * 60,
         log_lines=args.log_lines,
+        toc_layout=template.TOC_LAYOUTS[args.density],
+        toc_title_length=args.toc_title_length,
     )
 
 

@@ -7,6 +7,7 @@ import sys
 
 from bookpdf import app
 from bookpdf import console as con
+from bookpdf import template
 
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -34,6 +35,21 @@ def _log_lines(value: str) -> int:
     return number
 
 
+MIN_TOC_TITLE_LENGTH = 10
+MAX_TOC_TITLE_LENGTH = 200
+
+
+def _toc_title_length(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"'{value}' is not a whole number") from e
+    if number != 0 and not MIN_TOC_TITLE_LENGTH <= number <= MAX_TOC_TITLE_LENGTH:
+        raise argparse.ArgumentTypeError(
+            f"must be 0 (never cut) or between {MIN_TOC_TITLE_LENGTH} and {MAX_TOC_TITLE_LENGTH}")
+    return number
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bookpdf",
@@ -54,6 +70,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="minutes before a build is stopped (default: 180)")
     parser.add_argument("--log-lines", type=_log_lines, default=8,
                         help="engine output lines shown under the progress bar, 0 to hide (default: 8)")
+    parser.add_argument("--density", choices=tuple(template.TOC_LAYOUTS), default=template.DEFAULT_DENSITY,
+                        help="table of contents layout: tight = 3 columns, titles cut at 30 characters; "
+                             "loose = 2 columns, 50 characters (default: tight)")
+    parser.add_argument("--toc-title-length", type=_toc_title_length, default=None,
+                        help="cut TOC titles after this many characters, 0 to never cut "
+                             "(default: set by --density)")
     return parser
 
 
