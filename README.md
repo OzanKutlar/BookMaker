@@ -1,10 +1,12 @@
-# bookpdf
+# BookMaker
 
-Turns the chapters saved by the Book Translator CLI into print-ready PDFs, one per arc or volume.
+Turns chapters saved by the [Book Translator](https://github.com/OzanKutlar/Translator) CLI into formatted, print-ready PDFs—one per arc or volume.
 
-- Reads the translator's book folders and never modifies chapter files.
-- Shows each book's arcs/volumes from `Arcs.json` (recorded by the translator or defined here).
-- Converts the Markdown chapters to LaTeX and compiles them with Tectonic (or TeX Live) behind live progress bars.
+The primary purpose of BookMaker is to allow users to comfortably read their translated books and web novels on e-book readers (like Kindle, Kobo, and other e-ink devices) or tablets, complete with custom typesetting, clean multi-column tables of contents, and arc/volume separation.
+
+- Reads the [translator's](https://github.com/OzanKutlar/Translator) book folders and never modifies chapter files.
+- Shows each book's arcs/volumes from `Arcs.json` (recorded by the [translator](https://github.com/OzanKutlar/Translator) or defined here).
+- Converts Markdown chapters to LaTeX and compiles them with Tectonic (or TeX Live) behind live progress bars.
 - Every PDF numbers its chapters from 1, like a real hardcover volume. Afterwords print without a number.
 
 ## Setup
@@ -19,7 +21,7 @@ Turns the chapters saved by the Book Translator CLI into print-ready PDFs, one p
 
 1. Open https://github.com/tectonic-typesetting/tectonic/releases and pick the newest release that lists downloadable files (tags look like `tectonic@0.15.0`).
 2. Download the file ending in `x86_64-pc-windows-msvc.zip`.
-3. Extract `tectonic.exe` next to `bookpdf.py`. bookpdf looks there automatically, so no PATH changes are needed.
+3. Extract `tectonic.exe` next to `bookpdf.py`. BookMaker looks there automatically, so no PATH changes are needed.
 4. Check that it works:
 
         .\tectonic.exe --version
@@ -30,7 +32,7 @@ Mac: `brew install tectonic`. Linux: see https://tectonic-typesetting.github.io 
 
 ### Using TeX Live instead
 
-Install TeX Live (full) or MacTeX and make sure `xelatex` and `latexmk` work in a terminal. bookpdf uses them when Tectonic isn't found, or when you pass `--engine latexmk`.
+Install TeX Live (full) or MacTeX and make sure `xelatex` and `latexmk` work in a terminal. BookMaker uses them when Tectonic isn't found, or when you pass `--engine latexmk`.
 
 ## Usage
 
@@ -81,4 +83,4 @@ The file is copied into each build, so it doesn't need to be installed.
 
 ## Arcs.json
 
-Same file and format as the translator (`<Book>/Arcs.json`). Each arc stores its last chapter; it starts one chapter after the previous arc. Arcs you define here are marked `"source": "user"`, and the translator never moves them.
+Same file and format as the [translator](https://github.com/OzanKutlar/Translator) (`<Book>/Arcs.json`). Each arc stores its last chapter; it starts one chapter after the previous arc. Arcs you define here are marked `"source": "user"`, and the [translator](https://github.com/OzanKutlar/Translator) never moves them.
